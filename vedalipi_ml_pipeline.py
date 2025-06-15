@@ -4,7 +4,6 @@ import requests
 import json
 from indic_transliteration import sanscript
 from indic_transliteration.sanscript import transliterate
-from transformers import pipeline
 import logging
 from dotenv import load_dotenv
 import os
@@ -24,16 +23,12 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 # Load API keys from environment variables
 VISION_API_KEY = os.getenv('VISION_API_KEY')
-TRANSLATE_API_KEY = os.getenv('TRANSLATE_API_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 # Verify that API keys are loaded
-if not all([VISION_API_KEY, TRANSLATE_API_KEY, GEMINI_API_KEY]):
+if not all([VISION_API_KEY, GEMINI_API_KEY]):
     logging.error("One or more API keys are missing from the .env file.")
     raise ValueError("One or more API keys are missing from the .env file.")
-
-# Preload the summarizer model for interpretation
-summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
 
 # Global variable to store the latest processed text
 global_context = {
@@ -97,7 +92,7 @@ def extract_text_from_image(image_content, language_hint="sa"):
         logging.error(f"Error during OCR: {e}")
         return None
 
-# Step 2: Transliterate and Translate to English
+# Step 2: Transliterate and Translate to English using Gemini API
 def transliterate_sanskrit(sanskrit_text):
     """Transliterate Sanskrit text from Devanagari to IAST with a sanity check."""
     try:
@@ -109,58 +104,105 @@ def transliterate_sanskrit(sanskrit_text):
         raise
 
 def translate_to_english(text, source_language="sa", target_language="en"):
-    """Translate the text to English using Google Cloud Translation API."""
+    """Translate the text to English using Gemini API."""
     try:
-        # Prepare request to Google Cloud Translation API
-        translate_api_url = f"https://translation.googleapis.com/language/translate/v2?key={TRANSLATE_API_KEY}"
+        # Prepare the prompt for Gemini API
+        prompt = (
+            f"Translate the following {source_language} text to {target_language}:\n"
+            f"Text: {text}\n"
+            f"Provide only the translated text in {target_language}."
+        )
         
+        # Prepare the request to Gemini API
+        gemini_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         request_data = {
-            "q": text,
-            "source": source_language,
-            "target": target_language,
-            "format": "text"
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt}
+                    ]
+                }
+            ]
         }
         
         # Make the API request
-        response = requests.post(translate_api_url, data=request_data)
+        response = requests.post(
+            gemini_api_url,
+            json=request_data,
+            headers={'Content-Type': 'application/json'}
+        )
         
         # Process the response
         result = response.json()
         
         # Check for errors
         if 'error' in result:
-            raise ValueError(f"Translation API error: {result['error']['message']}")
+            raise ValueError(f"Gemini API error: {result['error']['message']}")
         
-        # Extract translated text
-        if (result.get('data') and 
-            result['data'].get('translations') and 
-            len(result['data']['translations']) > 0):
-            translated_text = result['data']['translations'][0]['translatedText']
+        # Extract the translated text
+        if (result.get('candidates') and 
+            len(result['candidates']) > 0 and 
+            result['candidates'][0].get('content') and 
+            result['candidates'][0]['content'].get('parts') and 
+            len(result['candidates'][0]['content']['parts']) > 0):
+            translated_text = result['candidates'][0]['content']['parts'][0]['text']
         else:
             translated_text = ""
         
-        return translated_text
+        return translated_text.strip()
     except Exception as e:
         logging.error(f"Error in translate_to_english: {str(e)}")
         raise
 
-# Step 3: Interpret the English Text
+# Step 3: Interpret the English Text using Gemini API
 def interpret_text(english_text):
-    """Summarize and interpret the translated English text with contextual analysis."""
+    """Interpret the translated English text using Gemini API."""
     try:
-        input_tokens = summarizer.tokenizer(english_text, return_tensors="pt", truncation=True)
-        input_length = input_tokens["input_ids"].shape[1]
-        max_length = max(30, input_length // 2)
-        summary = summarizer(english_text, max_length=max_length, min_length=30, do_sample=False)[0]['summary_text']
-        context = "This text appears to be a translated excerpt from an ancient Sanskrit manuscript."
-        if any(word in english_text.lower() for word in ["god", "deva", "spirit", "soul", "atman"]):
-            context += " It likely contains spiritual insights typical of Vedic literature."
-        elif any(word in english_text.lower() for word in ["knowledge", "vidya", "philosophy", "darshana"]):
-            context += " It may contain philosophical insights from Vedic traditions."
+        # Prepare the prompt for Gemini API
+        prompt = (
+            f"The following is a translated excerpt from an ancient Sanskrit manuscript:\n"
+            f"Text: {english_text}\n\n"
+            f"Provide a concise summary (2-3 sentences) of the text and a brief contextual analysis "
+            f"(1-2 sentences) identifying if it contains spiritual, philosophical, or historical insights typical of Vedic literature."
+        )
+        
+        # Prepare the request to Gemini API
+        gemini_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        request_data = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt}
+                    ]
+                }
+            ]
+        }
+        
+        # Make the API request
+        response = requests.post(
+            gemini_api_url,
+            json=request_data,
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        # Process the response
+        result = response.json()
+        
+        # Check for errors
+        if 'error' in result:
+            raise ValueError(f"Gemini API error: {result['error']['message']}")
+        
+        # Extract the interpretation
+        if (result.get('candidates') and 
+            len(result['candidates']) > 0 and 
+            result['candidates'][0].get('content') and 
+            result['candidates'][0]['content'].get('parts') and 
+            len(result['candidates'][0]['content']['parts']) > 0):
+            interpretation = result['candidates'][0]['content']['parts'][0]['text']
         else:
-            context += " It could provide historical or cultural insights from ancient India."
-        interpretation = f"Summary: {summary}\n\nContext: {context}"
-        return interpretation
+            interpretation = "Interpretation failed."
+        
+        return interpretation.strip()
     except Exception as e:
         logging.error(f"Error in interpret_text: {str(e)}")
         raise
@@ -723,13 +765,13 @@ def process_image():
         if sanskrit_text is None or sanskrit_text == "":
             raise ValueError("Text extraction failed")
         
-        # Step 2: Transliterate and translate
+        # Step 2: Transliterate and translate using Gemini API
         transliterated_text = transliterate_sanskrit(sanskrit_text)
-        english_text = translate_to_english(sanskrit_text)  # Pass sanskrit_text directly
+        english_text = translate_to_english(sanskrit_text)  # Now uses Gemini API
         if not english_text:
             raise ValueError("Translation failed")
         
-        # Step 3: Interpret the translated text
+        # Step 3: Interpret the translated text using Gemini API
         interpretation = interpret_text(english_text)
         
         # Store the results in global context for the chatbot

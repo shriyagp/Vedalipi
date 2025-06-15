@@ -1,6 +1,4 @@
 flask==2.3.2
 requests==2.31.0
 indic-transliteration==2.3.54
-transformers==4.41.2
-torch==2.3.0
 python-dotenv==1.0.1
