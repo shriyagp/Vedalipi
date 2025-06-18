@@ -614,9 +614,9 @@ def index():
         </nav>
         <section id="home" class="section">
             <video autoplay muted loop playsinline>
-                <source src="/static/background-video.mp4" type="video/mp4">
-                Your browser does not support the video tag.
-            </video>
+            <source src="./static/video.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
             <div class="upload-box">
                 <h2>Upload Ancient Script</h2>
                 <p>Begin your journey by uploading an ancient script dataset</p>
